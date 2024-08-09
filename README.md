@@ -73,7 +73,8 @@ Ensure tshark is installed:
 - **Flow Analysis**: Implement Sankey diagrams to visualize data flow between IP addresses.
 - **Real-Time Monitoring**: Add real-time traffic monitoring and visualization capabilities.
 
-### Screenshots
+### Screenshot
+![Network Traffic Visualization](https://github.com/webpro255/network-traffic-visualization/blob/main/pcapdemo.gif)
 
 
 
