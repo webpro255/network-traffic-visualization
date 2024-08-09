@@ -1,0 +1,306 @@
+<!-- 
+    This HTML file provides the user interface for the Network Traffic Visualization tool.
+    It includes D3.js scripts to visualize network traffic data extracted from pcapng files.
+    
+    Features:
+    - Upload pcapng files to visualize network traffic.
+    - Zoom and Pan to navigate the visualization.
+    - Color-coded protocols (TCP, UDP, ICMP) for easy identification.
+    - Tooltip and Highlighting to inspect specific nodes and connections.
+    - Anomaly Detection to highlight unusual traffic patterns.
+    - Save the visualization as an image (SVG) or export the data as JSON.
+
+    Technologies:
+    - D3.js for creating dynamic, interactive data visualizations.
+    - HTML and CSS for structuring and styling the user interface.
+-->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Traffic Visualization</title>
+    <style>
+        .tooltip {
+            font-size: 12px;
+            pointer-events: none;
+            background: #f9f9f9;
+            border: 1px solid #d3d3d3;
+            padding: 10px;
+            border-radius: 5px;
+            position: absolute;
+            visibility: hidden;
+        }
+
+        .legend text {
+            font-size: 14px;
+        }
+
+        #controls {
+            margin-bottom: 20px;
+        }
+
+        .heatmap rect {
+            fill-opacity: 0.5;
+        }
+    </style>
+</head>
+<body>
+    <h1>Network Traffic Visualization</h1>
+
+    <div id="controls">
+        <label for="viewSelector">View:</label>
+        <select id="viewSelector" onchange="updateView(this.value)">
+            <option value="all">All Traffic</option>
+            <option value="subnet">Specific Subnet</option>
+            <option value="protocol">Protocol</option>
+        </select>
+        <button onclick="saveAsImage()">Save as Image</button>
+        <button onclick="saveAsJSON()">Save as JSON</button>
+    </div>
+
+    <form id="uploadForm" enctype="multipart/form-data">
+        <input type="file" name="pcap" id="pcapFile" />
+        <button type="submit">Upload</button>
+    </form>
+    
+    <div id="visualization"></div>
+
+    <!-- Include D3.js -->
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/file-saver"></script>
+
+    <script>
+        document.getElementById('uploadForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+
+            const formData = new FormData();
+            const file = document.getElementById('pcapFile').files[0];
+            formData.append('pcap', file);
+
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                console.log('Data received:', data); // This logs the received data
+                visualizeData(data);
+            })
+            .catch(error => console.error('Error:', error));
+        });
+
+        let rawData = []; // To store original data for filtering
+
+        function visualizeData(data) {
+            rawData = data; // Store raw data for further use
+
+            // Remove any existing SVG element to prevent multiple graphs
+            d3.select("#visualization").selectAll("*").remove();
+
+            const width = 800;
+            const height = 600;
+
+            const svg = d3.select('#visualization').append('svg')
+                .attr('width', width)
+                .attr('height', height)
+                .call(d3.zoom().on("zoom", function(event) {
+                    g.attr("transform", event.transform);
+                }));
+
+            // Create a group element to hold the nodes and links
+            const g = svg.append("g");
+
+            const nodes = [...new Set(data.map(d => d.src).concat(data.map(d => d.dst)))].map(ip => ({ id: ip }));
+            const links = data.map(d => ({
+                source: d.src,
+                target: d.dst,
+                protocol: d.protocol,
+                size: d.size
+            }));
+
+            const simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2));
+
+            const link = g.append('g')
+                .selectAll('line')
+                .data(links)
+                .enter().append('line')
+                .attr('stroke-width', d => Math.sqrt(d.size / 10)) // Size link thickness based on packet size
+                .attr('stroke', d => color(d.protocol));
+
+            const node = g.append('g')
+                .selectAll('circle')
+                .data(nodes)
+                .enter().append('circle')
+                .attr('r', 10)
+                .attr('fill', 'blue')
+                .call(d3.drag()
+                    .on('start', dragStarted)
+                    .on('drag', dragged)
+                    .on('end', dragEnded));
+
+            const label = g.append('g')
+                .selectAll('text')
+                .data(nodes)
+                .enter().append('text')
+                .attr('dx', 12)
+                .attr('dy', '.35em')
+                .text(d => d.id);
+
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('cx', d => d.x)
+                    .attr('cy', d => d.y);
+
+                label
+                    .attr('x', d => d.x)
+                    .attr('y', d => d.y);
+            });
+
+            // Tooltip for nodes
+            const tooltip = d3.select("body").append("div")
+                .attr("class", "tooltip");
+
+            node.on("mouseover", function(event, d) {
+                    tooltip.style("visibility", "visible")
+                        .text(`IP: ${d.id}`);
+
+                    d3.select(this).attr("fill", "orange");
+
+                    link.attr("stroke", function(l) {
+                        return l.source.id === d.id || l.target.id === d.id ? "orange" : color(l.protocol);
+                    });
+                })
+                .on("mousemove", function(event) {
+                    tooltip.style("top", (event.pageY - 10) + "px")
+                        .style("left", (event.pageX + 10) + "px");
+                })
+                .on("mouseout", function() {
+                    tooltip.style("visibility", "hidden");
+
+                    d3.select(this).attr("fill", "blue");
+
+                    link.attr("stroke", d => color(d.protocol));
+                });
+
+            // Legend
+            const legend = svg.append("g")
+                .attr("class", "legend")
+                .attr("transform", "translate(50,30)");
+
+            const protocols = ["TCP", "UDP", "ICMP"]; // Example protocols
+
+            protocols.forEach((protocol, i) => {
+                const legendRow = legend.append("g")
+                    .attr("transform", `translate(0, ${i * 20})`);
+
+                legendRow.append("rect")
+                    .attr("width", 10)
+                    .attr("height", 10)
+                    .attr("fill", color(protocol));
+
+                legendRow.append("text")
+                    .attr("x", 20)
+                    .attr("y", 10)
+                    .attr("text-anchor", "start")
+                    .style("text-transform", "capitalize")
+                    .text(protocol);
+            });
+
+            // Anomaly detection
+            detectAnomalies(data);
+        }
+
+        function color(protocol) {
+            switch (protocol) {
+                case "TCP": return "blue";
+                case "UDP": return "green";
+                case "ICMP": return "red";
+                default: return "gray";
+            }
+        }
+
+        function dragStarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragEnded(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        function filterByProtocol(protocol) {
+            const filteredData = rawData.filter(d => d.protocol === protocol);
+            visualizeData(filteredData);
+        }
+
+        function detectAnomalies(data) {
+            const meanSize = d3.mean(data, d => +d.size);
+            const stdDev = d3.deviation(data, d => +d.size);
+            const threshold = meanSize + 2 * stdDev;
+
+            const anomalies = data.filter(d => +d.size > threshold);
+
+            anomalies.forEach(d => {
+                d3.select(`#node-${d.src}`).attr("fill", "red");
+                d3.select(`#link-${d.src}-${d.dst}`).attr("stroke", "red");
+            });
+        }
+
+        function updateView(view) {
+            switch(view) {
+                case "subnet":
+                    filterBySubnet("192.168.1.0/24"); // Example subnet
+                    break;
+                case "protocol":
+                    filterByProtocol("TCP"); // Example protocol
+                    break;
+                default:
+                    visualizeData(rawData);
+                    break;
+            }
+        }
+
+        function saveAsImage() {
+            const svgElement = document.querySelector("svg");
+            const serializer = new XMLSerializer();
+            const svgString = serializer.serializeToString(svgElement);
+            const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+            saveAs(blob, "network_visualization.svg");
+        }
+
+        function saveAsJSON() {
+            const jsonData = JSON.stringify(rawData);
+            const blob = new Blob([jsonData], { type: "application/json" });
+            saveAs(blob, "network_data.json");
+        }
+
+        function fetchGeolocation(ip) {
+            // Example API call, you need to replace 'YOUR_ACCESS_KEY' with a real key
+            fetch(`https://api.ipstack.com/${ip}?access_key=YOUR_ACCESS_KEY`)
+                .then(response => response.json())
+                .then(data => {
+                    // Handle geolocation data
+                });
+        }
+    </script>
+</body>
+</html>
