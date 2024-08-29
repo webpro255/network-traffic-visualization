@@ -31,7 +31,7 @@ This project is a powerful and interactive network traffic visualization tool bu
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/yourusername/network-traffic-visualization.git
+   git clone https://github.com/webpro255/network-traffic-visualization.git
    cd network-traffic-visualization
 
 2. **npm install**:   
